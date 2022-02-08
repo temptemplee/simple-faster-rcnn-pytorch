@@ -12,11 +12,50 @@ def read_image(path, dtype=np.float32, color=True):
 
     Args:
         path (str): A path of image file.
-        dtype: The type of array. The default value is :obj:`~numpy.float32`.
+        读入的path其实是一个个img文件, os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')
+        VOCdevkit\VOC2007\JPEGImages\000001.jpg - 009963.jpg约1万张图片,图像是CHW格式的
+        在神经网络中，图像被表示成[c, h, w]格式或者[n, c, h, w]格式，
+        但如果想要将图像以np.ndarray形式输入，因np.ndarray默认将图像表示成[h, w, c]个格式，
+        需要对其进行转化。n：样本数量 c：图像通道数 w：图像宽度 h：图像高度
+        from PIL import Image
+        imoprt numpy as np
+
+        img_path = ('./test.jpg')
+        img = Image.open(img_path)
+        img_arr = np.array(img)
+        print(img_arr.shape)
+
+        # 输出的结果是(500, 300, 3)
+        从上面的试验结果我们可以知道，图像以[h, w, c]的格式存储在np.ndarray中的。
+        参见https://blog.csdn.net/baidu_26646129/article/details/86712889
+
+        NCHW，又称：“channels_first”，是nvidia cudnn库原生支持的数据模式；
+        在GPU中，使用NCHW格式计算卷积，比NHWC要快2.5倍左右（0:54 vs 2:14）
+        NHWC, 又称“channels_last”，是CPU指令比较适合的方式，SSE 或 AVX优化，沿着最后一维，即C维计算，会更快。
+        NCHW排列，C在外层，所以每个通道内，像素紧挨在一起，即“RRRGGGBBB”；
+        NHWC排列，C在最内层，所以每个通道内，像素间隔挨在一起，即“RGBRGBRGB”，如下所示：
+        https://www.jianshu.com/p/61de601bc90f 
+
+        对于"NCHW" 而言，其同一个通道的像素值连续排布，更适合那些需要对每个通道单独做运算的操作，比如"MaxPooling"。
+        对于"NHWC"而言，其不同通道中的同一位置元素顺序存储，因此更适合那些需要对不同通道的同一像素做某种运算的操作，比如“Conv1x1
+
+        由于NCHW，需要把所有通道的数据都读取到，才能运算，所以在计算时需要的存储更多。这个特性适合GPU运算，正好利用了GPU内存带宽较大并且并行性强的特点，其访存与计算的控制逻辑相对简单；
+        而NHWC，每读取三个像素，都能获得一个彩色像素的值，即可对该彩色像素进行计算，这更适合多核CPU运算，CPU的内存带宽相对较小，每个像素计算的时延较低，临时空间也很小；
+        若采取异步方式边读边算来减小访存时间，计算控制会比较复杂，这也比较适合CPU。
+        结论：在训练模型时，使用GPU，适合NCHW格式；在CPU中做推理时，适合NHWC格式。
+        采用什么格式排列，由计算硬件的特点决定。
+        OpenCV在设计时是在CPU上运算的，所以默认HWC格式。
+        TensorFlow的默认格式是NHWC，也支持cuDNN的NCHW
+        
+        dtype: The type of array. The default value is :obj:`~numpy.float32`. 此类形是单精度浮点数
         color (bool): This option determines the number of channels.
             If :obj:`True`, the number of channels is three. In this case,
             the order of the channels is RGB. This is the default behaviour.
             If :obj:`False`, this function returns a grayscale image.
+            如果color = false，下面的代码实际上不是灰度值，而是'P'模式，
+            8位彩色图像(也叫做单通道格式彩图)，它的每个像素用8个bit表示
+            详见 https://blog.csdn.net/Leon1997726/article/details/109016170 
+            或者 https://zhuanlan.zhihu.com/p/58012264 
 
     Returns:
         ~numpy.ndarray: An image.
@@ -27,8 +66,11 @@ def read_image(path, dtype=np.float32, color=True):
         if color:
             img = f.convert('RGB')
         else:
-            img = f.convert('P')
-        img = np.asarray(img, dtype=dtype)
+            img = f.convert('P') # P是单通道格式彩图
+        img = np.asarray(img, dtype=dtype) 
+        # np.array()和np.asarray()的区别：
+        # 都可以将结构数据转化为ndarray，但是主要区别就是当数据源是ndarray时，
+        # array仍然会copy出一个副本，占用新的内存，但asarray不会。
     finally:
         if hasattr(f, 'close'):
             f.close()
