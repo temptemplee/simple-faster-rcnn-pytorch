@@ -60,6 +60,66 @@ def read_image(path, dtype=np.float32, color=True):
     Returns:
         ~numpy.ndarray: An image.
     """
+        # np.array()和np.asarray()的区别：
+        # 都可以将结构数据转化为ndarray，但是主要区别就是当数据源是ndarray时，
+        # array仍然会copy出一个副本，占用新的内存，但asarray不会。
+        # >>> data1=[[1,1,1],[1,1,1],[1,1,1]]
+        # >>> type(data1)
+        # <class 'list'> 这里data1是非ndarray型的，所以如下的arr2和arr3都是深拷贝
+        # >>> arr2=np.array(data1)
+        # >>> arr3=np.asarray(data1)
+        # >>> data1[1][1]=2
+        # >>> print(data1)
+        # [[1, 1, 1], [1, 2, 1], [1, 1, 1]]
+        # >>> print(arr2)
+        # [[1 1 1]
+        # [1 1 1]
+        # [1 1 1]]
+        # >>> print(arr3)
+        # [[1 1 1]
+        # [1 1 1]
+        # [1 1 1]]
+        # >>>
+        # >>> data2 = np.array([[1,1,1],[1,1,1],[1,1,1]])
+        # >>> type(data2)
+        # <class 'numpy.ndarray'> 这里data2是ndarray型的，所以arr4还是深拷贝，但arr5是浅拷贝一同随data2变化
+        # >>> arr4=np.array(data2)
+        # >>> arr5=np.asarray(data2)
+        # >>> data2[1][1]=3
+        # >>> print(data2)
+        # [[1 1 1]
+        # [1 3 1]
+        # [1 1 1]]
+        # >>> print(arr4)
+        # [[1 1 1]
+        # [1 1 1]
+        # [1 1 1]]
+        # >>> print(arr5)
+        # [[1 1 1]
+        # [1 3 1]
+        # [1 1 1]]
+
+
+    # try：
+    # code    #需要判断是否会抛出异常的代码，如果没有异常处理，python会直接停止执行程序
+    
+    # except:  #这里会捕捉到上面代码中的异常，并根据异常抛出异常处理信息
+    # #except ExceptionName，args：    #同时也可以接受异常名称和参数，针对不同形式的异常做处理
+    
+    # code  #这里执行异常处理的相关代码，打印输出等
+    
+    # else：  #如果没有异常则执行else
+    
+    # code  #try部分被正常执行后执行的代码
+    
+    # finally：
+    # code  #退出try语句块总会执行的程序
+
+    # 1.这里的else是和trycatch连用的，并且else只在try中代码没有异常的情况下执行，else必须在except这句代码存在的时候才能出现。
+
+    # 2.finally这个片段里面的代码是肯定在最后执行的，无论前面是否发生异常，最后总会执行finally片段内的代码。
+    # 如果try里面有return的话，那么finally的code也会在return之前执行到。详见
+    # https://www.cnblogs.com/xuanmanstein/p/8080629.html
 
     f = Image.open(path)
     try:
@@ -67,16 +127,26 @@ def read_image(path, dtype=np.float32, color=True):
             img = f.convert('RGB')
         else:
             img = f.convert('P') # P是单通道格式彩图
-        img = np.asarray(img, dtype=dtype) 
-        # np.array()和np.asarray()的区别：
-        # 都可以将结构数据转化为ndarray，但是主要区别就是当数据源是ndarray时，
-        # array仍然会copy出一个副本，占用新的内存，但asarray不会。
+        # 运行到这里：type(img)-> <class 'PIL.Image.Image'> print(img) <PIL.Image.Image image mode=RGB size=353x500 at 0x25414744D00>
+        img = np.asarray(img, dtype=dtype) # ndarray化的img是[h,w,c]格式的
+        # 运行到这里 type(img)-> <class 'numpy.ndarray'>; print(img.ndim)-> 3; print(img.shape) -> (500, 353, 3)
+        # 第一维是行，对应图片的高；第二维是列，对应图片的宽，第三维是3个RGB通道。
+        # >>> print(img)
+        # [[[  1.   1.   0.] 最内层的对应的是某列某行的像素的点对应的[R G B]三个值
+        # [  1.   1.   0.]
+        # [  1.   1.   0.]
+        # ...
+        # [  2.   4.   3.]
+        # [  2.   4.   3.]
+        # [  1.   3.   2.]]
+        # ...
+
     finally:
         if hasattr(f, 'close'):
             f.close()
 
     if img.ndim == 2:
-        # reshape (H, W) -> (1, H, W)
+        # reshape (H, W) -> (1, H, W) #f.convert()在1、P、L模式下都是单通道的ndarray信息
         return img[np.newaxis]
     else:
         # transpose (H, W, C) -> (C, H, W)
