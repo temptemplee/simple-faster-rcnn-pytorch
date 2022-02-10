@@ -147,6 +147,20 @@ def read_image(path, dtype=np.float32, color=True):
 
     if img.ndim == 2:
         # reshape (H, W) -> (1, H, W) #f.convert()在1、P、L模式下都是单通道的ndarray信息
+        # import numpy as np
+        # x1 = np.array([1, 2, 3, 4, 5,6])
+        # x2 = x1.reshape(3,-1)
+        # print(x1.shape) (6,)
+        # print(x2.shape) (3, 2)
+        # print(x2)
+
+        # x3 = x1[:, np.newaxis]
+        # print(x3.shape) (6, 1)
+        # print(x3)
+
+        # x4 = x2[:, np.newaxis]
+        # print(x4.shape) (3, 1, 2)
+        # print(x4) 为啥x3和x4展开得效果不太一样?
         return img[np.newaxis]
     else:
         # transpose (H, W, C) -> (C, H, W)
