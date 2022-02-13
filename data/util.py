@@ -149,21 +149,36 @@ def read_image(path, dtype=np.float32, color=True):
         # reshape (H, W) -> (1, H, W) #f.convert()在1、P、L模式下都是单通道的ndarray信息
         # import numpy as np
         # x1 = np.array([1, 2, 3, 4, 5,6])
-        # x2 = x1.reshape(3,-1)
         # print(x1.shape) (6,)
-        # print(x2.shape) (3, 2)
-        # print(x2)
 
         # x3 = x1[:, np.newaxis]
         # print(x3.shape) (6, 1)
-        # print(x3)
 
-        # x4 = x2[:, np.newaxis]
-        # print(x4.shape) (3, 1, 2)
-        # print(x4) 为啥x3和x4展开得效果不太一样?
+        # x4 = x1[np.newaxis]
+        # x4 = x1[np.newaxis,]
+        # x4 = x1[np.newaxis,:]
+        # print(x4.shape) (1, 6) 这三项都是(1,6),说明[]里面的维数,位于后面的可以默认省略,位于前面的不能默认省略
+
+        # print("------------")
+
+        # x2 = x1.reshape(3,-1)
+        # print(x2.shape) (3, 2)
+
+        # x5 = x2[np.newaxis]
+        # x5 = x2[np.newaxis,]
+        # x5 = x2[np.newaxis,:]
+        # print(x5.shape) (1, 3, 2) 这三项都一样,np.newaxis新加了第一维
+
+        # x6 = x2[:,np.newaxis]
+        # x6 = x2[:,np.newaxis,]
+        # x6 = x2[:,np.newaxis,:]
+        # print(x6.shape) (3, 1, 2) 这三项都一样,np.newaxis做为第二维的话,第一维不能省略,第三维可以省略
+
+        # x7 = x2[:,:,np.newaxis]
+        # print(x7.shape) (3, 2, 1) np.newaxis做为第三维的话,前两项都不能省略
         return img[np.newaxis]
     else:
-        # transpose (H, W, C) -> (C, H, W)
+        # transpose (H, W, C) -> (C, H, W) 哪一维跟哪一维互换的话,就是维号调换一下就行了
         return img.transpose((2, 0, 1))
 
 
@@ -190,8 +205,25 @@ def resize_bbox(bbox, in_size, out_size):
         Bounding boxes rescaled according to the given image shapes.
 
     """
+    # b = a: 赋值引用，a 和 b 都指向同一个对象。
+    # b = a.copy(): 浅拷贝, a 和 b 是一个独立的对象，但他们的子对象还是指向统一对象（是引用）。
+    # b = copy.deepcopy(a): 深度拷贝, a 和 b 完全拷贝了父对象及其子对象，两者是完全独立的。
+    # import copy
+    # l1 = [1, 2, [3, 4]]
+    # l2 = copy.copy(l1)
+    # print(l1)
+    # print(l2)
+    # l2[2][0] = 50
+    # l2[1] = 4
+    # print(l1)
+    # print(l2)
+    # [1, 2, [3, 4]]
+    # [1, 2, [3, 4]]
+    # [1, 2, [50, 4]]
+    # [1, 4, [50, 4]] 前两个是自己的,后一个是共享的子对象.所以自己的内容修改另一个看不到,子对象的修改另一个能看到.
     bbox = bbox.copy()
     y_scale = float(out_size[0]) / in_size[0]
+    # TODO: 这里感觉y_scale和x_scale可能不一致,但实际调用处的缩放比是一样的(?)  也许是为了提供一个更通用的接口函数?
     x_scale = float(out_size[1]) / in_size[1]
     bbox[:, 0] = y_scale * bbox[:, 0]
     bbox[:, 2] = y_scale * bbox[:, 2]
@@ -225,6 +257,9 @@ def flip_bbox(bbox, size, y_flip=False, x_flip=False):
         Bounding boxes flipped according to the given flips.
 
     """
+    # 因为bbox往往是img内部范围的一个框,其尺寸远远小于img本身,如果img翻转的话,
+    # bbox势必跟着一起翻转,但不是bbox自翻转,而是沿着img中轴反转。所以就体现在
+    # 需要知道img压缩后的实际H和W了。
     H, W = size
     bbox = bbox.copy()
     if y_flip:
@@ -293,17 +328,22 @@ def crop_bbox(
     if allow_outside_center:
         mask = np.ones(bbox.shape[0], dtype=bool)
     else:
+        # bbox.shape=(R,4), 所以bbox[:, :2]表示忽略第1维,第2维从开头(可省略):到第2个(前闭后开)前一列,既第0列和第1列
+        # bbox[:, 2:]表示第2维从第2列到最后列(可省略)
+        # 然后两个相加,其实就相当于bbox的两个x相加, 两个y相加
         center = (bbox[:, :2] + bbox[:, 2:]) / 2.0
+        # numpy.logical_and(x1, x2)返回X1和X2与逻辑后的布尔值。因为是center,
+        # 而bbox是向右下方展开的,所以center可以等于左上角坐标,但不能等于右下角坐标
         mask = np.logical_and(crop_bb[:2] <= center, center < crop_bb[2:]) \
             .all(axis=1)
 
     bbox = bbox.copy()
-    bbox[:, :2] = np.maximum(bbox[:, :2], crop_bb[:2])
-    bbox[:, 2:] = np.minimum(bbox[:, 2:], crop_bb[2:])
-    bbox[:, :2] -= crop_bb[:2]
-    bbox[:, 2:] -= crop_bb[:2]
+    bbox[:, :2] = np.maximum(bbox[:, :2], crop_bb[:2]) #取bbox和crop左上角最朝右下的一点
+    bbox[:, 2:] = np.minimum(bbox[:, 2:], crop_bb[2:]) #取bbox和crop右下角最朝左上的一点
+    bbox[:, :2] -= crop_bb[:2] # 这里是从原来的bbox中,减去因slice后而导致基准零点的变化
+    bbox[:, 2:] -= crop_bb[:2] #坐标零点从原来的(0,0)变成了crop之后的(t,l)
 
-    mask = np.logical_and(mask, (bbox[:, :2] < bbox[:, 2:]).all(axis=1))
+    mask = np.logical_and(mask, (bbox[:, :2] < bbox[:, 2:]).all(axis=1)) # bbox[:, :2] < bbox[:, 2:]这里保证右下角的点始终大于左上角的坐标对
     bbox = bbox[mask]
 
     if return_param:
@@ -314,14 +354,15 @@ def crop_bbox(
 
 def _slice_to_bounds(slice_):
     if slice_ is None:
+        # np.inf 表示+∞，是没有确切的数值的,类型为浮点型,表示没有slice_的话,就按0到正无穷处理
         return 0, np.inf
 
-    if slice_.start is None:
+    if slice_.start is None: #没有.start的话按从0开始
         l = 0
     else:
         l = slice_.start
 
-    if slice_.stop is None:
+    if slice_.stop is None: #没有.stop的话按正无穷大结尾
         u = np.inf
     else:
         u = slice_.stop
@@ -357,8 +398,8 @@ def translate_bbox(bbox, y_offset=0, x_offset=0):
     """
 
     out_bbox = bbox.copy()
-    out_bbox[:, :2] += (y_offset, x_offset)
-    out_bbox[:, 2:] += (y_offset, x_offset)
+    out_bbox[:, :2] += (y_offset, x_offset) #将bbox左上角坐标按offset偏移
+    out_bbox[:, 2:] += (y_offset, x_offset) #将bbox右下角坐标按offset偏移
 
     return out_bbox
 
@@ -400,9 +441,9 @@ def random_flip(img, y_random=False, x_random=False,
         x_flip = random.choice([True, False])
 
     if y_flip:
-        img = img[:, ::-1, :]
+        img = img[:, ::-1, :] #  C H W的第2维表示y, ::-1表示逆序
     if x_flip:
-        img = img[:, :, ::-1]
+        img = img[:, :, ::-1] #  C H W的第3维表示x, ::-1表示逆序
 
     if copy:
         img = img.copy()
