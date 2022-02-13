@@ -75,17 +75,27 @@ class VOCBboxDataset:
         #         )
         id_list_file = os.path.join(
             data_dir, 'ImageSets/Main/{0}.txt'.format(split))
+        # id_list_file为trainval.txt，或者test.txt 
+        # TODO: trainval.txt test.txt都是些啥东西？
+        # 格式化字符串的函数 str.format()，它增强了字符串格式化的功能。
+        # "{} {}".format("hello", "world")    # 不设置指定位置，按默认顺序 'hello world'
+        # "{0} {1}".format("hello", "world")  # 设置指定位置 'hello world'
+        # "{1} {0} {1}".format("hello", "world")  # 设置指定位置 'world hello world'
+        # VOC2007包含{'train', 'val', 'trainval', 'test'}，共20类，加背景21类。
+        # 四个集合图片数分别为2501， 2510，5011，4952（trainval=train+val）。
+        # VOC2012无test集。
 
-        self.ids = [id_.strip() for id_ in open(id_list_file)]
+        # strip() 方法删除任何前导（开头的空格）和尾随（结尾的空格）字符（空格是要删除的默认前导字符）
+        self.ids = [id_.strip() for id_ in open(id_list_file)
         self.data_dir = data_dir
         self.use_difficult = use_difficult
         self.return_difficult = return_difficult
-        self.label_names = VOC_BBOX_LABEL_NAMES
+        self.label_names = VOC_BBOX_LABEL_NAMES # 共20类
 
     def __len__(self):
-        return len(self.ids)
+        return len(self.ids) #trainval.txt有5011个，test.txt有210个
 
-    def get_example(self, i):
+    def get_example(self, i): # 返回彩色图像和边界框。
         """Returns the i-th example.
 
         Returns a color image and bounding boxes. The image is in CHW format.
@@ -100,32 +110,34 @@ class VOCBboxDataset:
         """
         id_ = self.ids[i]
         anno = ET.parse(
-            os.path.join(self.data_dir, 'Annotations', id_ + '.xml'))
+            os.path.join(self.data_dir, 'Annotations', id_ + '.xml')) #读取.xml文件（标签）
         bbox = list()
         label = list()
         difficult = list()
         for obj in anno.findall('object'):
             # when in not using difficult split, and the object is
-            # difficult, skipt it.
-            if not self.use_difficult and int(obj.find('difficult').text) == 1:
+            # difficult, skipt it. 对xml标签文件进行解析，xml文件中包含object name和difficult(0或者1,0代表容易检测)
+            if not self.use_difficult and int(obj.find('difficult').text) == 1:  #标为difficult的目标在测试评估中一般会被忽略
                 continue
 
             difficult.append(int(obj.find('difficult').text))
             bndbox_anno = obj.find('bndbox')
             # subtract 1 to make pixel indexes 0-based
+            # TODO: 标注的bbox坐标都是实际坐标值？不是以0开始的？
+            # TODO: bbox的4个坐标顺序 从utils.py看来顺序是[ymin, xmin, ymax, xmax],再查
             bbox.append([
                 int(bndbox_anno.find(tag).text) - 1
                 for tag in ('ymin', 'xmin', 'ymax', 'xmax')])
-            name = obj.find('name').text.lower().strip()
-            label.append(VOC_BBOX_LABEL_NAMES.index(name))
-        bbox = np.stack(bbox).astype(np.float32)
-        label = np.stack(label).astype(np.int32)
+            name = obj.find('name').text.lower().strip() # text转小写再去头尾
+            label.append(VOC_BBOX_LABEL_NAMES.index(name)) # 20个分类里面都是小写
+        bbox = np.stack(bbox).astype(np.float32) # 所有object的bbox坐标存在列表里
+        label = np.stack(label).astype(np.int32) # 所有object的label存在列表里
         # When `use_difficult==False`, all elements in `difficult` are False.
         difficult = np.array(difficult, dtype=np.bool).astype(np.uint8)  # PyTorch don't support np.bool
 
         # Load a image
         img_file = os.path.join(self.data_dir, 'JPEGImages', id_ + '.jpg')
-        img = read_image(img_file, color=True)
+        img = read_image(img_file, color=True) #如果color=True，则转换为RGB图
 
         # if self.return_difficult:
         #     return img, bbox, label, difficult
