@@ -105,6 +105,8 @@ class Transform(object):
         self.max_size = max_size
 
     # Transform实现了预处理，定义了__call__方法，
+    # Python 类中一个非常特殊的实例方法，即 __call__()。
+    # 该方法的功能类似于在类中重载 () 运算符，使得类实例对象可以像调用普通函数那样，以“对象名()”的形式使用
     # 在__call__方法中利用函数preprocess对图像预处理，并将bbox按照图像缩放的尺度等比例缩放。
     # 然后随机对图像与bbox同时进行水平翻转
     def __call__(self, in_data):
@@ -117,7 +119,7 @@ class Transform(object):
 
         # horizontally flip
         img, params = util.random_flip(
-            img, x_random=True, return_param=True)
+            img, x_random=True, return_param=True) # 只随机水平翻转
         bbox = util.flip_bbox(
             bbox, (o_H, o_W), x_flip=params['x_flip'])
 
@@ -127,10 +129,12 @@ class Transform(object):
 class Dataset:
     def __init__(self, opt):
         self.opt = opt
-        self.db = VOCBboxDataset(opt.voc_data_dir)
-        self.tsf = Transform(opt.min_size, opt.max_size)
+        self.db = VOCBboxDataset(opt.voc_data_dir) # 会自动调用VOCBboxDataset::__init__()
+        self.tsf = Transform(opt.min_size, opt.max_size) # TODO: 如何调用__call__()?
 
     def __getitem__(self, idx):
+        # VOCBboxDataset 既然也定义了__getitem__(),这里就应该调用__getitem__(), 
+        # 而不是get_example()了 TODO: ?
         ori_img, bbox, label, difficult = self.db.get_example(idx)
 
         img, bbox, label, scale = self.tsf((ori_img, bbox, label))

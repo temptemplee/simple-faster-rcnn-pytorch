@@ -61,7 +61,7 @@ class VOCBboxDataset:
             or not. The default value is :obj:`False`.
 
     """
-
+    # __init__构造方法用于创建对象时使用，每当创建一个类的实例对象时，Python 解释器都会自动调用它。
     def __init__(self, data_dir, split='trainval',
                  use_difficult=False, return_difficult=False,
                  ):
@@ -92,6 +92,8 @@ class VOCBboxDataset:
         self.return_difficult = return_difficult
         self.label_names = VOC_BBOX_LABEL_NAMES # 共20类
 
+    # 如果一个类表现得像一个list，要获取有多少个元素，就得用 len() 函数。
+    # 要让 len() 函数工作正常，类必须提供一个特殊方法__len__()，它返回元素的个数
     def __len__(self):
         return len(self.ids) #trainval.txt有5011个，test.txt有210个
 
@@ -143,6 +145,9 @@ class VOCBboxDataset:
         #     return img, bbox, label, difficult
         return img, bbox, label, difficult
 
+    # 凡是在类中定义了这个__getitem__ 方法，那么它的实例对象（假定为p），可以像
+    # 这样p[key] 取值，当实例对象做p[key] 运算时，会调用类中的方法__getitem__。
+    # 一般如果想使用索引访问元素时，就可以在类中定义这个方法（__getitem__(self, key) ）
     __getitem__ = get_example
 
 
