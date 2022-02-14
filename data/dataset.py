@@ -8,26 +8,46 @@ from data import util
 import numpy as np
 from utils.config import opt
 
-
+# 实现对caffe与torchvision版本的去正则化。因为可以利用caffe版本的vgg预训练权重，也可利用torchvision版本的预训练权重。只不过后者结果略微逊色于前者。
+# 因为pytorch预训练模型采用RGB 0-1图片(0-255?)，而对于caffe预训练模型输入为BGR 0-255图片
+# 不要偷懒，尽可能的“Match Everything”。由于torchvision中有预训练好的VGG16，
+# 而caffe预训练VGG要求输入图片像素在0-255之间（torchvision是0-1），BGR格式的，标准化只减均值，不除以标准差，
+# 看起来有点别扭（总之就是要多写几十行代码+专门下载模型）。然后我就用torchvision的预训练模型初始化，
+# 最后用了一大堆的trick，各种手动调参，才把mAP调到0.7（正常跑，不调参的话大概在0.692附近）。
+# 某天晚上抱着试试的心态，睡前把VGG的模型改成caffe的，第二天早上起来一看轻轻松松0.705 ...
 def inverse_normalize(img):
     if opt.caffe_pretrain:
+        # caffe_normalize之前有减均值预处理，现在还原回去
+        # 为啥是如下这三个数？
+        # https://github.com/open-mmlab/mmdetection/issues/4613 这三个数是caffe 基于骨架detectron统计出来的(还有另一组不同的值)。
+        # 这里没有乘以标准差，可见如上连接，std为1
         img = img + (np.array([122.7717, 115.9465, 102.9801]).reshape(3, 1, 1))
-        return img[::-1, :, :]
+        return img[::-1, :, :] #将caffe的BGR转换为pytorch需要的RGB图片（python [::-1]为逆序输出）
     # approximate un-normalize for visualize
+    # clip这个函数将将数组中的元素限制在a_min, a_max之间，大于a_max的就使得它等于 a_max，小于a_min,的就使得它等于a_min
+    # pytorch_normalze中标准化采用0均值标准化，转化函数为（x-mean）/(standard deviation)，现在乘以标准差加上均值还原回去，转换为0-255
+    # TODO: 0.225和0.45的由来？
+    # 参考下面pytorch_normalze()的注解
     return (img * 0.225 + 0.45).clip(min=0, max=1) * 255
 
 
+# 采用pytorch预训练模型对图片预处理，函数输入的img为0-1，参加下面的preprocess()
+# 实现对pytorch模型输入图像的标准化：由【0，255】的RGB转为【0，1】的RGB再正则化为【-1，1】的RGB
+# PyTorch 中我们经常看到 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225] ，是从 ImageNet 数据集的数百万张图片中随机抽样计算得到的
 def pytorch_normalze(img):
     """
     https://github.com/pytorch/vision/issues/223
     return appr -1~1 RGB
     """
     normalize = tvtsf.Normalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225])
-    img = normalize(t.from_numpy(img))
+                                std=[0.229, 0.224, 0.225]) # transforms.Normalize使用如下公式进行归一化channel=（channel-mean）/std,转换为[-1,1]
+    # torch.from_numpy(ndarray) → Tensor，即 从numpy.ndarray创建一个张量。
+    # 说明：返回的张量和ndarray共享同一内存。对张量的修改将反映在ndarray中，反之亦然。返回的张量是不能调整大小的。
+    img = normalize(t.from_numpy(img)) # (ndarray) → Tensor
     return img.numpy()
 
 
+# 采用caffe预训练模型对图片预处理，函数输入的img为0-1，参加下面的preprocess()
 def caffe_normalize(img):
     """
     return appr -125-125 BGR
@@ -35,10 +55,13 @@ def caffe_normalize(img):
     img = img[[2, 1, 0], :, :]  # RGB-BGR
     img = img * 255
     mean = np.array([122.7717, 115.9465, 102.9801]).reshape(3, 1, 1)
+    # TODO: 这里为啥不除以std?
+    # 可参见 https://github.com/open-mmlab/mmdetection/issues/4613 
+    # mean=[103.530, 116.280, 123.675], std=[1.0, 1.0, 1.0], to_rgb=False) 的std均为1！
     img = (img - mean).astype(np.float32, copy=True)
     return img
 
-
+# 函数输入的img为0-255
 def preprocess(img, min_size=600, max_size=1000):
     """Preprocess an image for feature extraction.
 
@@ -62,8 +85,9 @@ def preprocess(img, min_size=600, max_size=1000):
     C, H, W = img.shape
     scale1 = min_size / min(H, W)
     scale2 = max_size / max(H, W)
-    scale = min(scale1, scale2)
-    img = img / 255.
+    scale = min(scale1, scale2) # 选小的比例，这样长和宽都能放缩到规定的尺寸 注意长宽缩放比是一样的，没有两个不同的
+    img = img / 255. # 转换为0-1
+    # resize到（H * scale, W * scale）大小，anti_aliasing为是否采用高斯滤波
     img = sktsf.resize(img, (C, H * scale, W * scale), mode='reflect',anti_aliasing=False)
     # both the longer and shorter should be less than
     # max_size and min_size
@@ -80,13 +104,16 @@ class Transform(object):
         self.min_size = min_size
         self.max_size = max_size
 
+    # Transform实现了预处理，定义了__call__方法，
+    # 在__call__方法中利用函数preprocess对图像预处理，并将bbox按照图像缩放的尺度等比例缩放。
+    # 然后随机对图像与bbox同时进行水平翻转
     def __call__(self, in_data):
         img, bbox, label = in_data
         _, H, W = img.shape
         img = preprocess(img, self.min_size, self.max_size)
         _, o_H, o_W = img.shape
-        scale = o_H / H
-        bbox = util.resize_bbox(bbox, (H, W), (o_H, o_W))
+        scale = o_H / H # 得出缩放比因子，注意长宽共用preprocess()同一个缩放比
+        bbox = util.resize_bbox(bbox, (H, W), (o_H, o_W)) # 调整框的大小，按照与原框等比例缩放
 
         # horizontally flip
         img, params = util.random_flip(
