@@ -109,6 +109,7 @@ class Transform(object):
     # 该方法的功能类似于在类中重载 () 运算符，使得类实例对象可以像调用普通函数那样，以“对象名()”的形式使用
     # 在__call__方法中利用函数preprocess对图像预处理，并将bbox按照图像缩放的尺度等比例缩放。
     # 然后随机对图像与bbox同时进行水平翻转
+    # TODO: in_data.label不做任何处理就直接返回了？要它何用
     def __call__(self, in_data):
         img, bbox, label = in_data
         _, H, W = img.shape
@@ -129,14 +130,16 @@ class Transform(object):
 class Dataset:
     def __init__(self, opt):
         self.opt = opt
-        self.db = VOCBboxDataset(opt.voc_data_dir) # 会自动调用VOCBboxDataset::__init__()
-        self.tsf = Transform(opt.min_size, opt.max_size) # TODO: 如何调用__call__()?
+        self.db = VOCBboxDataset(opt.voc_data_dir) # 会自动调用VOCBboxDataset::__init__()，实例化类
+        self.tsf = Transform(opt.min_size, opt.max_size) # 这里调用了Transform::__init__()，实例化类
 
     def __getitem__(self, idx):
         # VOCBboxDataset 既然也定义了__getitem__(),这里就应该调用__getitem__(), 
         # 而不是get_example()了 TODO: ?
         ori_img, bbox, label, difficult = self.db.get_example(idx)
 
+        # 这里通过重载()调用了Transform::__call__（），用(ori_img, bbox, label)封装成传入的参数
+        # 为了以示区别，传入的用ori_img，tranform处理后返回的用img。
         img, bbox, label, scale = self.tsf((ori_img, bbox, label))
         # TODO: check whose stride is negative to fix this instead copy all
         # some of the strides of a given numpy array are negative.
@@ -146,6 +149,12 @@ class Dataset:
         return len(self.db)
 
 
+# TestData完成的功能和前面类似，但是获取调用的数据集是不同的 
+# 从Voc_data_dir中获取数据的时候使用了split='test'也就是从test往后分割的部分数据送入到TestDataset的self.db中
+# 在进行图片处理的时候，并没有调用transform函数，因为测试图片集没有bboxes需要考虑，
+# 同时测试图片集也不需要随机反转，反转无疑为测试准确率设置了阻碍！所以直接调用preposses()函数
+# 进行最大值最小值裁剪然后归一化就完成了测试数据集的处理！
+# 还有use_difficult默认为True TODO:为啥?
 class TestDataset:
     def __init__(self, opt, split='test', use_difficult=True):
         self.opt = opt
