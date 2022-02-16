@@ -4,7 +4,7 @@ import numpy as xp
 import six
 from six import __init__
 
-
+# 根据给定的源bbox和位置偏移，求目标边界框
 def loc2bbox(src_bbox, loc):
     """Decode bounding boxes from bounding box offsets and scales.
 
@@ -51,6 +51,11 @@ def loc2bbox(src_bbox, loc):
     if src_bbox.shape[0] == 0:
         return xp.zeros((0, 4), dtype=loc.dtype)
 
+    # 如下句子的用意是从src_bbox读入data type,然后再重新赋给自己,但禁止了dtype中可能
+    # 存在的copy属性,而是选择引用. class numpy.dtype(obj, align=False, copy=False):
+    # align - 是否按照C编译器的结构体输出格式对齐对象。
+    # Copy - 是拷贝对象，还是对对象的引用。
+    # TODO: 但这样做的目的何在？？？
     src_bbox = src_bbox.astype(src_bbox.dtype, copy=False)
 
     src_height = src_bbox[:, 2] - src_bbox[:, 0]
@@ -63,6 +68,7 @@ def loc2bbox(src_bbox, loc):
     dh = loc[:, 2::4]
     dw = loc[:, 3::4]
 
+    # 如下实现了R-CNN的算法 参见https://www.cnblogs.com/king-lps/p/8981222.html 页面的公式1)
     ctr_y = dy * src_height[:, xp.newaxis] + src_ctr_y[:, xp.newaxis]
     ctr_x = dx * src_width[:, xp.newaxis] + src_ctr_x[:, xp.newaxis]
     h = xp.exp(dh) * src_height[:, xp.newaxis]
@@ -76,7 +82,7 @@ def loc2bbox(src_bbox, loc):
 
     return dst_bbox
 
-
+# 已知源框和目标框求出其位置偏差
 def bbox2loc(src_bbox, dst_bbox):
     """Encodes the source and the destination bounding boxes to "loc".
 
@@ -129,15 +135,21 @@ def bbox2loc(src_bbox, dst_bbox):
     base_ctr_y = dst_bbox[:, 0] + 0.5 * base_height
     base_ctr_x = dst_bbox[:, 1] + 0.5 * base_width
 
+    # finfo(dtype) Machine limits for floating point types. 浮点类型的机器限制
+    # eps是取非负的最小值
+    # 如下这句话的意思是取height.dtype对应类型的浮点类型的最小值
     eps = xp.finfo(height.dtype).eps
+    # 将height,width与其比较保证全部是非负
     height = xp.maximum(height, eps)
     width = xp.maximum(width, eps)
 
-    dy = (base_ctr_y - ctr_y) / height
-    dx = (base_ctr_x - ctr_x) / width
-    dh = xp.log(base_height / height)
-    dw = xp.log(base_width / width)
+    # 如下实现了R-CNN的算法 参见https://www.cnblogs.com/king-lps/p/8981222.html 页面的公式3)
+    dy = (base_ctr_y - ctr_y) / height      # dy=（Gy-Py）/Ph
+    dx = (base_ctr_x - ctr_x) / width       # dx=（Gx-Px）/Pw
+    dh = xp.log(base_height / height)       #  dh=log(Gh/Ph)
+    dw = xp.log(base_width / width)         #  dw=log(Gw/Pw)
 
+    # np.vstack按照行的顺序把数组给堆叠起来
     loc = xp.vstack((dy, dx, dh, dw)).transpose()
     return loc
 
