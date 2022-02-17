@@ -185,13 +185,20 @@ def bbox_iou(bbox_a, bbox_b):
         raise IndexError
 
     # top left
-    tl = xp.maximum(bbox_a[:, None, :2], bbox_b[:, :2])
+    tl = xp.maximum(bbox_a[:, None, :2], bbox_b[:, :2]) # tl为交叉部分框左上角坐标最大值,相对靠近中间的左上角
     # bottom right
-    br = xp.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:])
+    br = xp.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:]) # br为交叉部分框右下角坐标最小值,相对靠近中间的右下角
 
+    # 所有坐标轴上tl<br时，返回数组元素的乘积(y1max-yimin)X(x1max-x1min)，bboxa与bboxb相交区域的面积
     area_i = xp.prod(br - tl, axis=2) * (tl < br).all(axis=2)
+
+    # 计算bboxa的面积
     area_a = xp.prod(bbox_a[:, 2:] - bbox_a[:, :2], axis=1)
+
+    # 计算bboxb的面积
     area_b = xp.prod(bbox_b[:, 2:] - bbox_b[:, :2], axis=1)
+
+    # 计算IOU
     return area_i / (area_a[:, None] + area_b - area_i)
 
 
@@ -202,7 +209,7 @@ def __test():
 if __name__ == '__main__':
     __test()
 
-
+# 实现生成(0,0)坐标开始的基础的9个anchor框
 def generate_anchor_base(base_size=16, ratios=[0.5, 1, 2],
                          anchor_scales=[8, 16, 32]):
     """Generate anchor base windows by enumerating aspect ratio and scales.
@@ -242,12 +249,35 @@ def generate_anchor_base(base_size=16, ratios=[0.5, 1, 2],
     px = base_size / 2.
 
     anchor_base = np.zeros((len(ratios) * len(anchor_scales), 4),
-                           dtype=np.float32)
+                           dtype=np.float32) #（9，4），注意：这里只是以特征图的左上角点为基准产生的9个anchor
+    # six.moves 是用来处理那些在python2 和 3里面函数的位置有变化的，
+    # 直接用six.moves就可以屏蔽掉这些变化
     for i in six.moves.range(len(ratios)):
         for j in six.moves.range(len(anchor_scales)):
             h = base_size * anchor_scales[j] * np.sqrt(ratios[i])
             w = base_size * anchor_scales[j] * np.sqrt(1. / ratios[i])
-
+ '''
+这9个anchor形状应为：
+90.50967 *181.01933    = 128^2
+181.01933 * 362.03867 = 256^2
+362.03867 * 724.07733 = 512^2
+128.0 * 128.0 = 128^2
+256.0 * 256.0 = 256^2
+512.0 * 512.0 = 512^2
+181.01933 * 90.50967   = 128^2
+362.03867 * 181.01933 = 256^2
+724.07733 * 362.03867 = 512^2
+该函数返回值为anchor_base，形状9*4，是9个anchor的左上右下坐标：
+-37.2548 -82.5097 53.2548 98.5097
+-82.5097	-173.019	98.5097	189.019
+-173.019	-354.039	189.019	370.039
+-56	-56	72	72
+-120	-120	136	136
+-248	-248	264	264
+-82.5097	-37.2548	98.5097	53.2548
+-173.019	-82.5097	189.019	98.5097
+-354.039	-173.019	370.039	189.019
+'''
             index = i * len(anchor_scales) + j
             anchor_base[index, 0] = py - h / 2.
             anchor_base[index, 1] = px - w / 2.
