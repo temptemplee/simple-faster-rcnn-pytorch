@@ -154,6 +154,9 @@ def bbox2loc(src_bbox, dst_bbox):
     return loc
 
 
+# TODO: N不等于K的时候怎么办？返回值是啥？
+# 根据下面注释的意思，返回的是一个(N,K) iou 矩阵，每个(n,k)值是第n个bbox_a
+# 跟第k个bbox_b的IOU值
 def bbox_iou(bbox_a, bbox_b):
     """Calculate the Intersection of Unions (IoUs) between bounding boxes.
 

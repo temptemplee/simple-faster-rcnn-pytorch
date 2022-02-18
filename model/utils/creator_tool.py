@@ -166,6 +166,8 @@ class AnchorTargetCreator(object):
         self.neg_iou_thresh = neg_iou_thresh
         self.pos_ratio = pos_ratio
 
+    # anchor的4个值的意思是: (y_{min}, x_{min}, y_{max}, x_{max})
+    # bbox的4个值好像意思也一样
     def __call__(self, bbox, anchor, img_size):
         """Assign ground truth supervision to sampled subset of anchors.
 
@@ -208,8 +210,8 @@ class AnchorTargetCreator(object):
         loc = bbox2loc(anchor, bbox[argmax_ious])
 
         # map up to original set of anchors
-        label = _unmap(label, n_anchor, inside_index, fill=-1)
-        loc = _unmap(loc, n_anchor, inside_index, fill=0)
+        label = _unmap(label, n_anchor, inside_index, fill=-1) # 将位于图片内部的框的label对应到所有生成的20000个框中（label原本为所有在图片中的框的）
+        loc = _unmap(loc, n_anchor, inside_index, fill=0) # 将回归的框对应到所有生成的20000个框中（label原本为所有在图片中的框的）
 
         return loc, label
 
