@@ -482,11 +482,14 @@ class ProposalCreator:
 
         # Convert anchors into proposal via bbox transformations.
         # roi = loc2bbox(anchor, loc)
-        roi = loc2bbox(anchor, loc)
+        roi = loc2bbox(anchor, loc) # 利用预测的修正值，对12000个anchor进行修正
 
         # Clip predicted boxes to image.
+        # roi维度是(R,4), slice(start, end, step), slice(0, 4, 2)取出第0列和第2列，
+        # 然后用numpy.clip(a, a_min, a_max, out=None)截取a_min, a_max之间的
         roi[:, slice(0, 4, 2)] = np.clip(
             roi[:, slice(0, 4, 2)], 0, img_size[0])
+        # slice(1, 4, 2)取出第1列和第3列
         roi[:, slice(1, 4, 2)] = np.clip(
             roi[:, slice(1, 4, 2)], 0, img_size[1])
 
@@ -496,10 +499,14 @@ class ProposalCreator:
         ws = roi[:, 3] - roi[:, 1]
         keep = np.where((hs >= min_size) & (ws >= min_size))[0]
         roi = roi[keep, :]
-        score = score[keep]
+        score = score[keep] # TODO: 传入的score是啥
 
         # Sort all (proposal, score) pairs by score from highest to lowest.
         # Take top pre_nms_topN (e.g. 6000).
+        # ravel()将数组维度拉成一维数组，argsort()函数是将x中的元素从小到大排列，提取其对应的index(索引)，然后输出到y
+        # 例如 >>> np.array([1,4,3,-1,6,9]).argsort()
+        # array([3, 0, 2, 1, 4, 5], dtype=int64) 输出的是索引值
+        # [::-1]逆序全部排列，逆序后就是从大到小排列了
         order = score.ravel().argsort()[::-1]
         if n_pre_nms > 0:
             order = order[:n_pre_nms]
@@ -511,11 +518,18 @@ class ProposalCreator:
 
         # unNOTE: somthing is wrong here!
         # TODO: remove cuda.to_gpu
+        # # NMS算法
+        # bboxes维度为[N,4]，scores维度为[N,], 均为tensor
+        # def nms(self, bboxes, scores, threshold=0.5):
         keep = nms(
             torch.from_numpy(roi).cuda(),
             torch.from_numpy(score).cuda(),
             self.nms_thresh)
         if n_post_nms > 0:
-            keep = keep[:n_post_nms]
+            keep = keep[:n_post_nms]、
+        # pytorch用GPU训练数据时，需要将数据转换成tensor类型(上面的torch.from_numpy().cuda()过程)，
+        # 其输出keep也是tensor类型。如果想把CUDA tensor格式的数据改成numpy时，
+        # 需要先将其转换成cpu float-tensor随后再转到numpy格式。 
+        # numpy不能读取CUDA tensor 需要将它转化为 CPU tensor 所以得写成.cpu().numpy()
         roi = roi[keep.cpu().numpy()]
         return roi
