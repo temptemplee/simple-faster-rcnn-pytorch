@@ -132,6 +132,9 @@ class ProposalTargetCreator(object):
         return sample_roi, gt_roi_loc, gt_roi_label
 
 
+# 为Faster-RCNN专有的RPN网络提供自我训练的样本，RPN网络正是利用AnchorTargetCreator产生的样本
+# 作为数据进行网络的训练和学习的，这样产生的预测anchor的类别和位置才更加精确，anchor变成真正的ROIS
+# 需要进行位置修正，而AnchorTargetCreator产生的带标签的样本就是给RPN网络进行训练学习用哒
 class AnchorTargetCreator(object):
     """Assign the ground truth bounding boxes to anchors.
 
@@ -160,7 +163,7 @@ class AnchorTargetCreator(object):
     def __init__(self,
                  n_sample=256,
                  pos_iou_thresh=0.7, neg_iou_thresh=0.3,
-                 pos_ratio=0.5):
+                 pos_ratio=0.5): # 默认值正样本数不超过128个
         self.n_sample = n_sample
         self.pos_iou_thresh = pos_iou_thresh
         self.neg_iou_thresh = neg_iou_thresh
@@ -201,12 +204,33 @@ class AnchorTargetCreator(object):
         img_H, img_W = img_size
 
         n_anchor = len(anchor)
-        inside_index = _get_inside_index(anchor, img_H, img_W)
-        anchor = anchor[inside_index]
+        inside_index = _get_inside_index(anchor, img_H, img_W) # 将那些超出图片范围的anchor全部去掉,只保留位于图片内部的序号
+        anchor = anchor[inside_index] # 保留位于图片内部的anchor
         argmax_ious, label = self._create_label(
-            inside_index, anchor, bbox)
+            inside_index, anchor, bbox) # 筛选出符合条件的正例128个负例128并给它们附上相应的label
 
         # compute bounding box regression targets
+        # anchor和bbox[argmax_ious]两个都是inside_index长度的
+        # >>> bbox
+        # array([[ 1,  5,  5,  2],
+        #     [ 9,  6,  2,  8],
+        #     [ 3,  7,  9,  1],
+        #     [30, 17,  9, 21]])
+        # >>> bbox[0,2] 用简单的坐标得出来的是一个值，要用如下的ndarray或者list
+        # 5
+        # >>> a = np.array([0,2])
+        # >>> a
+        # array([0, 2])
+        # >>> bbox[a] ndarray模式，可以返回bbox中指定的argmax_ious行
+        # array([[1, 5, 5, 2],
+        #     [3, 7, 9, 1]])
+        # >>> a = (0,2)
+        # >>> bbox[a]
+        # 5
+        # >>> a = [0,2]
+        # >>> bbox[a] list模式，可以返回bbox中指定的argmax_ious行
+        # array([[1, 5, 5, 2],
+        #     [3, 7, 9, 1]])
         loc = bbox2loc(anchor, bbox[argmax_ious])
 
         # map up to original set of anchors
@@ -217,15 +241,24 @@ class AnchorTargetCreator(object):
 
     def _create_label(self, inside_index, anchor, bbox):
         # label: 1 is positive, 0 is negative, -1 is dont care
-        label = np.empty((len(inside_index),), dtype=np.int32)
-        label.fill(-1)
+        # numpy.empty(shape, dtype=float, order=‘C’) 根据给定的维度和数值类型返回一个新的数组，其元素不进行初始化。
+        # empty不像zeros一样，并不会将数组的元素值设定为0，因此运行起来可能快一些。
+        # 在另一方面，它要求用户人为地给数组中的每一个元素赋值，所以应该谨慎使用。
+        # 在初始化一个不为0的数组时，np.empty然后np.fill比np.zero再np.fill要快一些。
+        label = np.empty((len(inside_index),), dtype=np.int32) # inside_index为所有在图片范围内的anchor序号
+        label.fill(-1) # 缺省填-1
 
         argmax_ious, max_ious, gt_argmax_ious = \
-            self._calc_ious(anchor, bbox, inside_index)
+            self._calc_ious(anchor, bbox, inside_index) # 调用_calc_ious（）函数得到每个anchor与哪个bbox的iou最大以及这个iou值、
+                                                        # 每个bbox与哪个anchor的iou最大(需要体会从行和列取最大值的区别)
+                                                        # argmax_ious：每行最大ious的索引值(总共inside_index个，因为inside_index行)
+                                                        # max_ious：上述每行对应argmax_ious位置的ious值
+                                                        # gt_argmax_ious：返回所有gt_box(列)对应最大ious所在的anchor值(行)
 
         # assign negative labels first so that positive labels can clobber them
         label[max_ious < self.neg_iou_thresh] = 0
 
+        # 根据这个看，_calc_ious()里面gt_argmax_ious只需要计算第一遍就足够这里标记1了
         # positive label: for each gt, anchor with highest iou
         label[gt_argmax_ious] = 1
 
@@ -235,6 +268,11 @@ class AnchorTargetCreator(object):
         # subsample positive labels if we have too many
         n_pos = int(self.pos_ratio * self.n_sample)
         pos_index = np.where(label == 1)[0]
+        # numpy.random.choice(a, size=None, replace=True, p=None)
+        # 从a(只要是ndarray都可以，但必须是一维的)中随机抽取数字，并组成指定大小(size)的数组
+        # replace:True表示可以取相同数字，False表示不可以取相同数字
+        # 数组p：与数组a相对应，表示取数组a中每个元素的概率，默认为选取每个元素的概率相同。
+        # 从pos_index中随机取len(pos_index) - n_pos个数组成disable_index，然后给它设置成-1
         if len(pos_index) > n_pos:
             disable_index = np.random.choice(
                 pos_index, size=(len(pos_index) - n_pos), replace=False)
@@ -252,11 +290,60 @@ class AnchorTargetCreator(object):
 
     def _calc_ious(self, anchor, bbox, inside_index):
         # ious between the anchors and the gt boxes
+        # ious维度是(anchor个数N，bbox个数K) N大概有15000个传入的anchor
+        # 实际上是anchor = anchor[inside_index]，所以其实N = len(inside_index)
         ious = bbox_iou(anchor, bbox)
-        argmax_ious = ious.argmax(axis=1)
+
+        # >>> a
+        # array([[1, 5, 5, 2],
+        #        [9, 6, 2, 8],
+        #        [3, 7, 9, 1]])
+        # >>> print(np.argmax(a, axis=1))
+        # [1 0 2]
+        argmax_ious = ious.argmax(axis=1) # 1代表行，0代表列 axis=1表明argmax求的是每一个anchor对于所有gt_box最大的iou的索引值
+                                          # len(argmax) = N(即len(inside_index))
+
+        # arange() 主要是用于生成数组 numpy.arange(start, stop, step, dtype = None)
+        # start —— 开始位置，数字，可选项，默认起始值为0
+        # stop —— 停止位置，数字
+        # step —— 步长，数字，可选项， 默认步长为1，如果指定了step，则还必须给出start。
+        # ious是一个(N(即len(inside_index)), K)维度
+        # np.arange(len(inside_index))生成了array([0, 1, 2,...N-1])，这里其实也可以用np.arange(ious.shape[0])代替
+        # 然后ious[x, y]是分别返回坐标在(x,y)的ious数值，max_ious的shape是(N,1)
         max_ious = ious[np.arange(len(inside_index)), argmax_ious]
-        gt_argmax_ious = ious.argmax(axis=0)
-        gt_max_ious = ious[gt_argmax_ious, np.arange(ious.shape[1])]
+
+        # >>> a
+        # array([[1, 5, 5, 2],
+        #        [9, 6, 2, 8],
+        #        [3, 7, 9, 1]])
+        # >>> print(np.argmax(a, axis=0))
+        # [1, 2, 2, 1]，返回的是列下每列最大值(每个gt_box对不同anchor的最大值的索引)
+        gt_argmax_ious = ious.argmax(axis=0) # 0代表列，从列取最大
+
+        # gt_max_ious = array([9, 7, 9, 8]) 取得列模式下最大值坐标所对应的最大值本身
+        gt_max_ious = ious[gt_argmax_ious, np.arange(ious.shape[1])] #求出每个bbox与哪个anchor的iou最大值，gt_max_ious的shape是(K,1)
+
+        # ious == gt_max_ious 这里用了广播的特性
+        # array([[False, False, False, False],
+        #        [ True, False, False,  True],
+        #        [False,  True,  True, False]])
+        # np.where(ious == gt_max_ious)
+        # (array([1, 1, 2, 2], dtype=int64), array([0, 3, 1, 2], dtype=int64))
+        # np.where返回的是condition为true的N维坐标，这里是2维的，所以[1,0],[1,3],[2,1],[2,2]，
+        # 但是np.where()[0]是第一维的，而且数值是从小到大排列的。
+        #TODO: 这样做有个问题：如果 ious一列中有两个相同的最大值，如第三列：
+        # >>> ious
+        # array([[1, 5, 5, 2],
+        #        [9, 6, 9, 8],
+        #        [3, 7, 9, 1]])
+        # gt_max_ious = array([9, 7, 9, 8])
+        # >>> ious == gt_max_ious 第三列就会有多个True值
+        # array([[False, False, False, False],
+        #        [ True, False,  True,  True],
+        #        [False,  True,  True, False]])
+        # >>> np.where(ious == gt_max_ious)
+        # (array([1, 1, 1, 2, 2], dtype=int64), array([0, 2, 3, 1, 2], dtype=int64))
+        # 第一维就会返回多于K个的值，后期如何处理？
         gt_argmax_ious = np.where(ious == gt_max_ious)[0]
 
         return argmax_ious, max_ious, gt_argmax_ious
@@ -266,11 +353,12 @@ def _unmap(data, count, index, fill=0):
     # Unmap a subset of item (data) back to the original set of items (of
     # size count)
 
-    if len(data.shape) == 1:
+    if len(data.shape) == 1: # label是一维数据
+        # np.empty随机生成size=count的数组
         ret = np.empty((count,), dtype=data.dtype)
         ret.fill(fill)
         ret[index] = data
-    else:
+    else: # loc是多维数组 :math:`(R, 4)`，且用[1:]开始跳过第0维，第0维用count代替
         ret = np.empty((count,) + data.shape[1:], dtype=data.dtype)
         ret.fill(fill)
         ret[index, :] = data

@@ -154,9 +154,9 @@ def bbox2loc(src_bbox, dst_bbox):
     return loc
 
 
-# TODO: N不等于K的时候怎么办？返回值是啥？
-# 根据下面注释的意思，返回的是一个(N,K) iou 矩阵，每个(n,k)值是第n个bbox_a
-# 跟第k个bbox_b的IOU值
+# N不等于K的时候怎么办？返回值是啥？
+# 答：根据下面注释的意思，返回的是一个(N,K) iou 矩阵，每个(n,k)值是
+# 第n个bbox_a跟第k个bbox_b的IOU值
 def bbox_iou(bbox_a, bbox_b):
     """Calculate the Intersection of Unions (IoUs) between bounding boxes.
 
@@ -188,6 +188,15 @@ def bbox_iou(bbox_a, bbox_b):
         raise IndexError
 
     # top left
+    # bbox_a是个(N, 4)，bbox_b是个(K, 4)，这里想比较bbox_a中每一个边框跟bbox_b中的IOU。
+    # bbox[:, :2]取出的是4个坐标系中前两列，即左上角的坐标。shape上就是(N,2)和(K,2)。
+    # 期望输出的是（N,K,2)，所以不能直接np.maximum((N,2), (K,2))。
+    # 这里用了numpy的broadcasting特性： https://www.numpy.org.cn/user/basics/broadcasting.html
+    # 一般广播规则 在两个数组上运行时，NumPy会逐元素地比较它们的形状。它从尾随尺寸开始，并向前发展。
+    # 两个尺寸兼容时：要么他们是平等的，要么其中一个是1(从而展开扩展)。
+    # 所以这里使用bbox_a[:, None, :2]，把维度扩展成(N,1,2)，而bbox_b[:, :2]维度是(K,2)
+    # 从而np.maximum生成维度是(N, K, 2)数据，这里tl(N,K)矩阵，矩阵的每一项都是靠近中间的左上角
+    # 坐标对
     tl = xp.maximum(bbox_a[:, None, :2], bbox_b[:, :2]) # tl为交叉部分框左上角坐标最大值,相对靠近中间的左上角
     # bottom right
     br = xp.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:]) # br为交叉部分框右下角坐标最小值,相对靠近中间的右下角
