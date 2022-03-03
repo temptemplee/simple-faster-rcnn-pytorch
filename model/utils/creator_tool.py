@@ -3,7 +3,11 @@ import torch
 from torchvision.ops import nms
 from model.utils.bbox_tools import bbox2loc, bbox_iou, loc2bbox
 
-
+# 上一级ProposalCreator产生2000个ROIS，但是这些ROIS并不都用于训练，
+# 经过本级ProposalTargetCreator的筛选产生128个用于自身的训练，规则如下:、
+# 1 ROIS和GroundTruth_bbox的IOU大于0.5(pos_iou_thresh),选取一些(比如说本实验的32(pos_ratio)个)作为正样本
+# 2 选取ROIS和GroundTruth_bbox的IOUS小于等于0(neg_iou_thresh_lo)的选取一些比如说选取128-32=96个作为负样本
+# 3 然后分别对ROI_Headers进行训练
 class ProposalTargetCreator(object):
     """Assign ground truth bounding boxes to given RoIs.
 
@@ -23,7 +27,7 @@ class ProposalTargetCreator(object):
             foreground.
         neg_iou_thresh_hi (float): RoI is considered to be the background
             if IoU is in
-            [:obj:`neg_iou_thresh_hi`, :obj:`neg_iou_thresh_hi`).
+            [:obj:`neg_iou_thresh_lo`, :obj:`neg_iou_thresh_hi`).
         neg_iou_thresh_lo (float): See above.
 
     """
@@ -39,6 +43,11 @@ class ProposalTargetCreator(object):
         self.neg_iou_thresh_hi = neg_iou_thresh_hi
         self.neg_iou_thresh_lo = neg_iou_thresh_lo  # NOTE:default 0.1 in py-faster-rcnn
 
+    # 假设一张960*540的图片，经过vgg16的四次pool，最后的特征图大小为60*33，每个像素点产生9个anchor，共60*33*9=17820个，约20000个anchor
+    # 为2000个rois赋予ground truth！（严格讲挑出128个赋予ground truth！）
+    # 输入：2000个rois、一个batch（一张图）中所有的bbox ground truth（R，4）、对应bbox所包含的label（R，1）（VOC2007来说20类0-19）
+    # 输出：128个sample roi（128，4）、128个gt_roi_loc（128，4）、128个gt_roi_label（128，1）
+    # 因为这些数据是要放入到整个大网络里进行训练的，比如说位置数据，所以要对其位置坐标进行数据增强处理(归一化处理)
     def __call__(self, roi, bbox, label,
                  loc_normalize_mean=(0., 0., 0., 0.),
                  loc_normalize_std=(0.1, 0.1, 0.2, 0.2)):
@@ -90,14 +99,29 @@ class ProposalTargetCreator(object):
         """
         n_bbox, _ = bbox.shape
 
+        # numpy.concatenate((a1,a2,...), axis=0)函数。能够一次完成多个数组的拼接
+        # >>> a=np.array([[1,2,3],[4,5,6]])
+        # >>> b=np.array([[11,21,31],[7,8,9]])
+        # >>> np.concatenate((a,b),axis=0)
+        # array([[ 1,  2,  3],
+        #     [ 4,  5,  6],
+        #     [11, 21, 31],
+        #     [ 7,  8,  9]])
+        # >>> np.concatenate((a,b),axis=1)  #axis=1表示对应行的数组进行拼接
+        # array([[ 1,  2,  3, 11, 21, 31],
+        #        [ 4,  5,  6,  7,  8,  9]])
+        # numpy.concatenate()比numpy.append()效率高，适合大规模的数据拼接
+        # 首先将2000个roi和m个bbox给concatenate了一下成为新的roi（2000+m，4）
+        # TODO: 这里为啥concatenate?感觉没必要
         roi = np.concatenate((roi, bbox), axis=0)
 
         pos_roi_per_image = np.round(self.n_sample * self.pos_ratio)
-        iou = bbox_iou(roi, bbox)
-        gt_assignment = iou.argmax(axis=1)
-        max_iou = iou.max(axis=1)
+        iou = bbox_iou(roi, bbox) # iou (2000+m, m) #TODO:最后m行m列其实都是bbox自己？
+        gt_assignment = iou.argmax(axis=1) # 按行找到最大值，返回最大值对应的序号。返回的是每个roi与**哪个**bbox的最大。shape是(2000+m,)
+        max_iou = iou.max(axis=1) # 每个roi与对应bbox最大的iou，shape是(2000+m,)
         # Offset range of classes from [0, n_fg_class - 1] to [1, n_fg_class].
         # The label with value 0 is the background.
+        # gt_assignment是R个bbox里面的第几个，label[gt_assignment]是第gt_assignment个bbox所对应的类别值，再加1做偏移
         gt_roi_label = label[gt_assignment] + 1
 
         # Select foreground RoIs as those with >= pos_iou_thresh IoU.
@@ -119,18 +143,22 @@ class ProposalTargetCreator(object):
                 neg_index, size=neg_roi_per_this_image, replace=False)
 
         # The indices that we're selecting (both positive and negative).
-        keep_index = np.append(pos_index, neg_index)
+        # 利用这128个索引值keep_index就得到了128个sample roi，128个gt_label
+        keep_index = np.append(pos_index, neg_index) #TODO:干嘛不用np.concatenate了？
         gt_roi_label = gt_roi_label[keep_index]
         gt_roi_label[pos_roi_per_this_image:] = 0  # negative labels --> 0
         sample_roi = roi[keep_index]
 
         # Compute offsets and scales to match sampled RoIs to the GTs.
+        # 将sample_roi和其所属bbox经函数bbox2loc就得到了128个gt_loc
         gt_roi_loc = bbox2loc(sample_roi, bbox[gt_assignment[keep_index]])
+
+        # 因为这些数据是要放入到整个大网络里进行训练的，比如说位置数据，所以要对其位置坐标进行数据增强处理(归一化处理)
+        # bbox2loc没有进行归一化，只是按照公式计算tx,ty,th,tw，保证Pw和Ph为正。至于均值和方差的取值，和数据集有关。
         gt_roi_loc = ((gt_roi_loc - np.array(loc_normalize_mean, np.float32)
                        ) / np.array(loc_normalize_std, np.float32))
 
         return sample_roi, gt_roi_loc, gt_roi_label
-
 
 # 为Faster-RCNN专有的RPN网络提供自我训练的样本，RPN网络正是利用AnchorTargetCreator产生的样本
 # 作为数据进行网络的训练和学习的，这样产生的预测anchor的类别和位置才更加精确，anchor变成真正的ROIS
