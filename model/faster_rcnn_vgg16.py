@@ -143,6 +143,12 @@ class VGG16RoIHead(nn.Module):
         # in case roi_indices is  ndarray
         roi_indices = at.totensor(roi_indices).float()
         rois = at.totensor(rois).float()
+        # cat()函数目的： 在给定维度上对输入的张量序列seq 进行连接操作。
+        # outputs = torch.cat(inputs, dim=?) → Tensor
+        # inputs : 待连接的张量序列，可以是任意相同Tensor类型的python 序列
+        # dim : 选择的扩维, 必须在0到len(inputs[0])之间，沿着此维连接张量序列。
+        # python增加数组和减少数组维度的方法(None、np.newaxis和0的用法）
+        # 增加数组维度,可以使用None(可以理解为New One)或者np.newaxis
         indices_and_rois = t.cat([roi_indices[:, None], rois], dim=1)
         # NOTE: important: yx->xy
         xy_indices_and_rois = indices_and_rois[:, [0, 2, 1, 4, 3]]
