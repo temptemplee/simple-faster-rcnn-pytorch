@@ -19,17 +19,19 @@ def decom_vgg16():
     else:
         model = vgg16(not opt.load_path)
 
-    features = list(model.features)[:30]
+    features = list(model.features)[:30] # 模型前30层
     classifier = model.classifier
 
     classifier = list(classifier)
-    del classifier[6]
+    del classifier[6] #TODO:啥？
     if not opt.use_drop:
-        del classifier[5]
-        del classifier[2]
+        del classifier[5] # 在ROIHead中删除dropout层
+        del classifier[2] # 在ROIHead中删除dropout层
+    # nn.Sequential 一个有序的容器，神经网络模块将按照在传入构造器的顺序
+    # 依次被添加到计算图中执行，同时以神经网络模块为元素的有序字典也可以作为传入参数。
     classifier = nn.Sequential(*classifier)
 
-    # freeze top4 conv
+    # freeze top4 conv # TODO: why?
     for layer in features[:10]:
         for p in layer.parameters():
             p.requires_grad = False
@@ -104,8 +106,8 @@ class VGG16RoIHead(nn.Module):
         super(VGG16RoIHead, self).__init__()
 
         self.classifier = classifier
-        self.cls_loc = nn.Linear(4096, n_class * 4)
-        self.score = nn.Linear(4096, n_class)
+        self.cls_loc = nn.Linear(4096, n_class * 4) # head里面的第一层FC_4096网络
+        self.score = nn.Linear(4096, n_class) # head里面的第二层FC_4096网络
 
         normal_init(self.cls_loc, 0, 0.001)
         normal_init(self.score, 0, 0.01)
@@ -113,7 +115,13 @@ class VGG16RoIHead(nn.Module):
         self.n_class = n_class
         self.roi_size = roi_size
         self.spatial_scale = spatial_scale
-        self.roi = RoIPool( (self.roi_size, self.roi_size),self.spatial_scale)
+        # torchvision.ops.roi_pool(input, boxes, output_size, spatial_scale=1.0)
+        # input (Tensor[N, C, H, W]) – 输入张量
+        # boxes (Tensor[K, 5] or List[Tensor[L, 4]]) – 输入的box 坐标，格式：list(x1, y1, x2, y2) 或者(batch_index, x1, y1, x2, y2)
+        # output_size (int or Tuple[int, int]) – 输出尺寸, 格式： (height, width)
+        # spatial_scale (float) – 将输入坐标映射到box坐标的尺度因子. 默认: 1.0
+        # ROIPool就是：根据rois，在featrues上对每个roi（兴趣区域，目标框）maxpool出一个7*7的池化结果
+        self.roi = RoIPool( (self.roi_size, self.roi_size),self.spatial_scale) #TODO: 更详细说明?
 
     def forward(self, x, rois, roi_indices):
         """Forward the chain.
@@ -153,6 +161,7 @@ def normal_init(m, mean, stddev, truncated=False):
     weight initalizer: truncated normal and random normal.
     """
     # x is a parameter
+    # 在对VGG16RoIHead网络的全连接层权重初始化过程中，按照图像是否为truncated分了两种初始化分方法
     if truncated:
         m.weight.data.normal_().fmod_(2).mul_(stddev).add_(mean)  # not a perfect approximation
     else:

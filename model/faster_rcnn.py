@@ -82,6 +82,8 @@ class FasterRCNN(nn.Module):
         self.loc_normalize_std = loc_normalize_std
         self.use_preset('evaluate')
 
+    # Python 还提供了 @property 装饰器。通过 @property 装饰器，可以直接通过方法名来访问方法，
+    # 不需要在方法名后添加一对（）小括号
     @property
     def n_class(self):
         # Total number of classes including the background.
@@ -151,10 +153,10 @@ class FasterRCNN(nn.Module):
                 preset to use.
 
         """
-        if preset == 'visualize':
+        if preset == 'visualize': # 预设是可视化的，则非最大值抑制的阈值=0.3，用于随机丢弃区域建议的阈值=0.7
             self.nms_thresh = 0.3
             self.score_thresh = 0.7
-        elif preset == 'evaluate':
+        elif preset == 'evaluate': # 预设是评价性的，则非最大值抑制的阈值=0.3，用于随机丢弃区域建议的阈值=0.05
             self.nms_thresh = 0.3
             self.score_thresh = 0.05
         else:
@@ -171,18 +173,29 @@ class FasterRCNN(nn.Module):
             mask = prob_l > self.score_thresh
             cls_bbox_l = cls_bbox_l[mask]
             prob_l = prob_l[mask]
+
+            # # NMS算法
+            # bboxes维度为[N,4]，scores维度为[N,], 均为tensor
+            # def nms(self, bboxes, scores, threshold=0.5):
             keep = nms(cls_bbox_l, prob_l,self.nms_thresh)
             # import ipdb;ipdb.set_trace()
             # keep = cp.asnumpy(keep)
+
+            # pytorch用GPU训练数据时，需要将数据转换成tensor类型(上面的torch.from_numpy().cuda()过程)，
+            # 其输出keep也是tensor类型。如果想把CUDA tensor格式的数据改成numpy时，
+            # 需要先将其转换成cpu float-tensor随后再转到numpy格式。 
+            # numpy不能读取CUDA tensor 需要将它转化为 CPU tensor 所以得写成.cpu().numpy()
             bbox.append(cls_bbox_l[keep].cpu().numpy())
             # The labels are in [0, self.n_class - 2].
             label.append((l - 1) * np.ones((len(keep),)))
             score.append(prob_l[keep].cpu().numpy())
+
         bbox = np.concatenate(bbox, axis=0).astype(np.float32)
         label = np.concatenate(label, axis=0).astype(np.int32)
         score = np.concatenate(score, axis=0).astype(np.float32)
         return bbox, label, score
 
+    # TODO: 函数装饰器
     @nograd
     def predict(self, imgs,sizes=None,visualize=False):
         """Detect objects from images.
@@ -212,7 +225,7 @@ class FasterRCNN(nn.Module):
                Each value indicates how confident the prediction is.
 
         """
-        self.eval()
+        self.eval() #TODO: 这是什么？
         if visualize:
             self.use_preset('visualize')
             prepared_imgs = list()
@@ -227,11 +240,18 @@ class FasterRCNN(nn.Module):
         bboxes = list()
         labels = list()
         scores = list()
+        # zip() 函数用于将可迭代的对象作为参数，将对象中对应的元素打包成一个个元组，然后返回由这些元组组成的列表
         for img, size in zip(prepared_imgs, sizes):
             img = at.totensor(img[None]).float()
             scale = img.shape[3] / size[1]
-            roi_cls_loc, roi_scores, rois, _ = self(img, scale=scale)
+            roi_cls_loc, roi_scores, rois, _ = self(img, scale=scale) # 调用了自己的()方法，也就是__call__() #TODO: 到底调用哪个？看样子像RegionProposalNetwork的forward()的返回值
             # We are assuming that batch size is 1.
+            # pytorch中的.detach和.data深入详解, 这两个方法都可以用来从原有的计算图中分离出某一个tensor，
+            # 有相似的地方，也有不同的地方，下面来比较性的看一看。PyTorch0.4以及之后的版本中，
+            # .data 仍保留，但建议使用 .detach() 
+            # refer to https://blog.csdn.net/qq_27825451/article/details/96837905 
+            # pytorch中的detach是什么功能? detach的方法，将variable参数从网络中隔离开，不参与参数更新。
+            # torch.Tensor.detach()是新版本中可以用来替换data的方法，而且比data要更安全
             roi_score = roi_scores.data
             roi_cls_loc = roi_cls_loc.data
             roi = at.totensor(rois) / scale
@@ -245,15 +265,17 @@ class FasterRCNN(nn.Module):
 
             roi_cls_loc = (roi_cls_loc * std + mean)
             roi_cls_loc = roi_cls_loc.view(-1, self.n_class, 4)
-            roi = roi.view(-1, 1, 4).expand_as(roi_cls_loc)
+            roi = roi.view(-1, 1, 4).expand_as(roi_cls_loc) # expand_as()将张量扩展为参数tensor的大小。
             cls_bbox = loc2bbox(at.tonumpy(roi).reshape((-1, 4)),
                                 at.tonumpy(roi_cls_loc).reshape((-1, 4)))
             cls_bbox = at.totensor(cls_bbox)
             cls_bbox = cls_bbox.view(-1, self.n_class * 4)
             # clip bounding box
+            # PyTorch torch.clamp()方法将所有输入元素限制在[min，max]范围内，并返回结果张量
             cls_bbox[:, 0::2] = (cls_bbox[:, 0::2]).clamp(min=0, max=size[0])
             cls_bbox[:, 1::2] = (cls_bbox[:, 1::2]).clamp(min=0, max=size[1])
 
+            # TODO: roi_score是什么维度的？dim=1是取哪列值？
             prob = (F.softmax(at.totensor(roi_score), dim=1))
 
             bbox, label, score = self._suppress(cls_bbox, prob)
