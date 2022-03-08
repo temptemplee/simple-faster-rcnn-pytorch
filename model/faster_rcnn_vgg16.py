@@ -105,9 +105,11 @@ class VGG16RoIHead(nn.Module):
         # n_class includes the background
         super(VGG16RoIHead, self).__init__()
 
-        self.classifier = classifier
-        self.cls_loc = nn.Linear(4096, n_class * 4) # head里面的第一层FC_4096网络
-        self.score = nn.Linear(4096, n_class) # head里面的第二层FC_4096网络
+        # 感觉https://www.cnblogs.com/king-lps/p/8995412.html 图上的fc6/fc7都是classifier部分
+        # 是的，详见vgg-16的框架图
+        self.classifier = classifier 
+        self.cls_loc = nn.Linear(4096, n_class * 4) # head里面的最下面的FC_84网络，进4096，出84
+        self.score = nn.Linear(4096, n_class) # head里面的最下面的FC_21网络，进4096，出21
 
         normal_init(self.cls_loc, 0, 0.001)
         normal_init(self.score, 0, 0.01)
@@ -151,14 +153,16 @@ class VGG16RoIHead(nn.Module):
         # 增加数组维度,可以使用None(可以理解为New One)或者np.newaxis
         indices_and_rois = t.cat([roi_indices[:, None], rois], dim=1)
         # NOTE: important: yx->xy
+        # TODO: rois的序列调整之前为啥是yx，还有为啥要翻转
         xy_indices_and_rois = indices_and_rois[:, [0, 2, 1, 4, 3]]
+        # 当调用contiguous()时，会强制拷贝一份tensor，让它的布局和从头创建的一模一样，但是两个tensor完全没有联系
         indices_and_rois =  xy_indices_and_rois.contiguous()
 
         pool = self.roi(x, indices_and_rois)
         pool = pool.view(pool.size(0), -1)
-        fc7 = self.classifier(pool)
-        roi_cls_locs = self.cls_loc(fc7)
-        roi_scores = self.score(fc7)
+        fc7 = self.classifier(pool) # VGG-16的classifier()包含了两块FC_4096，参见VGG-16框架图
+        roi_cls_locs = self.cls_loc(fc7) # FC_84 输入4096，输出84
+        roi_scores = self.score(fc7) # FC_21 输入4096，输出21
         return roi_cls_locs, roi_scores
 
 

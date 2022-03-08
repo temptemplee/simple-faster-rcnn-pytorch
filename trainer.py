@@ -58,8 +58,30 @@ class FasterRCNNTrainer(nn.Module):
         self.vis = Visualizer(env=opt.env)
 
         # indicators for training status
+        # classtorchnet.meter.ConfusionMeter(k, normalized=False)
+        # 维护一个混淆矩阵conf，大小为K * K，每行表示真实类别被和其他类的混淆值
+        # (混淆矩阵是机器学习中总结分类模型预测结果的情形分析表，以矩阵形式将数据
+        # 集中的记录按照真实的类别与分类模型预测的类别判断两个标准进行汇总。
+        # 其中矩阵的行表示真实值，矩阵的列表示预测值)
+        # Parameters:
+        # k (int) – 类别数
+        # normalized (boolean) – 混淆矩阵归一化（行归一化）
+        # 方法
+        # add(predicted, target)
+        # Parameters:
+        # predicted (tensor) – N x K tensor 或者一个 N-tensor （值0到k-1)，为predictor的输出
+        # target (tensor) – N x K tensor(one hot) 或者一个 N-tensor（值0到k-1) 为真实类别
+        # value()： 返回混淆矩阵
         self.rpn_cm = ConfusionMeter(2)
         self.roi_cm = ConfusionMeter(21)
+
+        # classtorchnet.meter.AverageValueMeter
+        # 计算平均值
+        # 方法
+        # add(self, value, n=1)
+        # value是要记录的值，n是记录次数
+        # reset()
+        # value()： 返回平均值和标准差
         self.meters = {k: AverageValueMeter() for k in LossTuple._fields}  # average loss
 
     def forward(self, imgs, bboxes, labels, scale):
@@ -100,11 +122,11 @@ class FasterRCNNTrainer(nn.Module):
             self.faster_rcnn.rpn(features, img_size, scale)
 
         # Since batch size is one, convert variables to singular form
-        bbox = bboxes[0]
-        label = labels[0]
-        rpn_score = rpn_scores[0]
-        rpn_loc = rpn_locs[0]
-        roi = rois
+        bbox = bboxes[0] # bbox维度(N, R, 4)
+        label = labels[0] # labels维度为（N，R）
+        rpn_score = rpn_scores[0] #（hh*ww*9，4）
+        rpn_loc = rpn_locs[0] # hh*ww*9
+        roi = rois # (2000,4)
 
         # Sample RoIs and forward
         # it's fine to break the computation graph of rois, 
@@ -136,25 +158,28 @@ class FasterRCNNTrainer(nn.Module):
             self.rpn_sigma)
 
         # NOTE: default value of ignore_index is -100 ...
+        # rpn_score为rpn网络得到的（20000个）与anchor_target_creator得到的2000个label求交叉熵损失
         rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label.cuda(), ignore_index=-1)
         _gt_rpn_label = gt_rpn_label[gt_rpn_label > -1]
         _rpn_score = at.tonumpy(rpn_score)[at.tonumpy(gt_rpn_label) > -1]
         self.rpn_cm.add(at.totensor(_rpn_score, False), _gt_rpn_label.data.long())
 
         # ------------------ ROI losses (fast rcnn loss) -------------------#
-        n_sample = roi_cls_loc.shape[0]
-        roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
-        roi_loc = roi_cls_loc[t.arange(0, n_sample).long().cuda(), \
-                              at.totensor(gt_roi_label).long()]
+        n_sample = roi_cls_loc.shape[0] # roi_cls_loc为VGG16RoIHead的输出（128*84）， n_sample=128
+        roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4) # roi_cls_loc=（128,21,4）
+        roi_loc = roi_cls_loc[t.arange(0, n_sample).long().cuda(), at.totensor(gt_roi_label).long()]
         gt_roi_label = at.totensor(gt_roi_label).long()
         gt_roi_loc = at.totensor(gt_roi_loc)
 
         roi_loc_loss = _fast_rcnn_loc_loss(
-            roi_loc.contiguous(),
+            roi_loc.contiguous(), # TODO: 为啥这个需要contiguous()?
             gt_roi_loc,
             gt_roi_label.data,
             self.roi_sigma)
 
+        # corss_entropy与CrossEntropyLoss两个接口在结果上没有什么区别，都可以用。
+        # 但是在函数定义上，有一些区别，Torch中CrossEntropyLoss这个接口是在nn module下面的一个类，
+        # 所以在使用时，得先定义一个实例，而corss_entropy是nn.functional下的一个功能函数，直接用就可以了。
         roi_cls_loss = nn.CrossEntropyLoss()(roi_score, gt_roi_label.cuda())
 
         self.roi_cm.add(at.totensor(roi_score, False), gt_roi_label.data.long())
@@ -165,11 +190,11 @@ class FasterRCNNTrainer(nn.Module):
         return LossTuple(*losses)
 
     def train_step(self, imgs, bboxes, labels, scale):
-        self.optimizer.zero_grad()
-        losses = self.forward(imgs, bboxes, labels, scale)
-        losses.total_loss.backward()
-        self.optimizer.step()
-        self.update_meters(losses)
+        self.optimizer.zero_grad() # 将梯度数据全部清零
+        losses = self.forward(imgs, bboxes, labels, scale) # 将所有的损失计算出来
+        losses.total_loss.backward() # 反向传播计算梯度
+        self.optimizer.step() # 进行一次参数更新过程
+        self.update_meters(losses) # 就是将所有损失的数据更新到可视化界面上
         return losses
 
     def save(self, save_optimizer=False, save_path=None, **kwargs):
@@ -246,13 +271,16 @@ def _smooth_l1_loss(x, t, in_weight, sigma):
     return y.sum()
 
 
+# 输入分别为rpn回归框的偏移量与anchor与bbox的偏移量以及label
+# in_weight代表的是权重，用in_weight来作为权重，只将那些不是背景的anchor/ROIs的位置加入到损失函数的计算中来，
+# 方法就是只给不是背景的anchor/ROIs的in_weight设置为1,这样就可以完成loc_loss的求和计算
 def _fast_rcnn_loc_loss(pred_loc, gt_loc, gt_label, sigma):
     in_weight = t.zeros(gt_loc.shape).cuda()
     # Localization loss is calculated only for positive rois.
     # NOTE:  unlike origin implementation, 
     # we don't need inside_weight and outside_weight, they can calculate by gt_label
     in_weight[(gt_label > 0).view(-1, 1).expand_as(in_weight).cuda()] = 1
-    loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma)
+    loc_loss = _smooth_l1_loss(pred_loc, gt_loc, in_weight.detach(), sigma) # sigma设置为1
     # Normalize by total number of negtive and positive rois.
-    loc_loss /= ((gt_label >= 0).sum().float()) # ignore gt_label==-1 for rpn_loss
+    loc_loss /= ((gt_label >= 0).sum().float()) # ignore gt_label==-1 for rpn_loss # 除去背景类
     return loc_loss
