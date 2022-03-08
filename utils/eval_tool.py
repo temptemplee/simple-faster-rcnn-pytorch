@@ -77,6 +77,8 @@ def eval_detection_voc(
 
     ap = calc_detection_voc_ap(prec, rec, use_07_metric=use_07_metric)
 
+    # numpy.nanmean()函数可用于计算忽略NaN值的数组平均值。
+    # 如果数组具有NaN值，我们可以找出不受NaN值影响的均值。
     return {'ap': ap, 'map': np.nanmean(ap)}
 
 
@@ -140,13 +142,15 @@ def calc_detection_voc_prec_rec(
             set to :obj:`None`.
 
     """
-
+    # python中的迭代器用起来非常灵巧，不仅可以迭代序列，也可以
+    # 迭代表现出序列行为的对象，例如字典的键、一个文件的行，等等。
     pred_bboxes = iter(pred_bboxes)
     pred_labels = iter(pred_labels)
     pred_scores = iter(pred_scores)
     gt_bboxes = iter(gt_bboxes)
     gt_labels = iter(gt_labels)
     if gt_difficults is None:
+        # repeat()负责把一个元素无限重复下去，不过如果提供第二个参数就可以限定重复次数
         gt_difficults = itertools.repeat(None)
     else:
         gt_difficults = iter(gt_difficults)
@@ -163,6 +167,8 @@ def calc_detection_voc_prec_rec(
         if gt_difficult is None:
             gt_difficult = np.zeros(gt_bbox.shape[0], dtype=bool)
 
+        #  a = np.unique(A) 对于一维数组或者列表，unique函数去除其中重
+        # 复的元素，并按元素由大到小返回一个新的无元素重复的元组或者列表
         for l in np.unique(np.concatenate((pred_label, gt_label)).astype(int)):
             pred_mask_l = pred_label == l
             pred_bbox_l = pred_bbox[pred_mask_l]
@@ -177,28 +183,31 @@ def calc_detection_voc_prec_rec(
             gt_difficult_l = gt_difficult[gt_mask_l]
 
             n_pos[l] += np.logical_not(gt_difficult_l).sum()
+            # extend()函数 只适用于简单的一维数组，对于大量数据的拼接一般不建议使用。
             score[l].extend(pred_score_l)
 
-            if len(pred_bbox_l) == 0:
+            if len(pred_bbox_l) == 0: # 如果没有预测这个类别的 直接循环下一个类别了
                 continue
-            if len(gt_bbox_l) == 0:
+            if len(gt_bbox_l) == 0: # 如果gt没有这个类别，还预测了这个类别，match填入0，没匹配上
+                # pred_bbox_l.shape[0]表示预测匹配l类别的个数,然后因为gt没有此类别,所以在字典
+                # match[l类别].extend()这么多个0值
                 match[l].extend((0,) * pred_bbox_l.shape[0])
                 continue
 
             # VOC evaluation follows integer typed bounding boxes.
             pred_bbox_l = pred_bbox_l.copy()
-            pred_bbox_l[:, 2:] += 1
+            pred_bbox_l[:, 2:] += 1 # TODO: 这里是4个坐标里面右下角的两个坐标, 为啥要+1?
             gt_bbox_l = gt_bbox_l.copy()
             gt_bbox_l[:, 2:] += 1
 
-            iou = bbox_iou(pred_bbox_l, gt_bbox_l)
+            iou = bbox_iou(pred_bbox_l, gt_bbox_l) # 对于每个图片，类别正确 才开始计算iou，iou>阈值 才说明正确
             gt_index = iou.argmax(axis=1)
             # set -1 if there is no matching ground truth
             gt_index[iou.max(axis=1) < iou_thresh] = -1
-            del iou
+            del iou # TODO: 为啥这里要删除bbox_iou()创建不久的iou?
 
             selec = np.zeros(gt_bbox_l.shape[0], dtype=bool)
-            for gt_idx in gt_index:
+            for gt_idx in gt_index: # 这里是每个gt只匹配一次，下面图片说明
                 if gt_idx >= 0:
                     if gt_difficult_l[gt_idx]:
                         match[l].append(-1)
