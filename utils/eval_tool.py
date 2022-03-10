@@ -223,6 +223,9 @@ def calc_detection_voc_prec_rec(
     for iter_ in (
             pred_bboxes, pred_labels, pred_scores,
             gt_bboxes, gt_labels, gt_difficults):
+        # 当使用next()去访问一个已经迭代完的迭代器时，会有这样的报错：StopIteration
+        # 解决方法就是给一个默认值：next(iter , 默认值)，当迭代完成后会输出这个默认值
+        # 然后判断输出的是不是这个默认值，下面代码里默认值是None
         if next(iter_, None) is not None:
             raise ValueError('Length of input iterables need to be same.')
 
@@ -293,6 +296,8 @@ def calc_detection_voc_ap(prec, rec, use_07_metric=False):
                 if np.sum(rec[l] >= t) == 0:
                     p = 0
                 else:
+                    # numpy.nan_to_num(x, copy=True, nan=0.0, posinf=None, neginf=None)
+                    # 使用0代替数组x中的nan元素，使用有限的数字代替inf元素(默认行为)
                     p = np.max(np.nan_to_num(prec[l])[rec[l] >= t])
                 ap[l] += p / 11
         else:

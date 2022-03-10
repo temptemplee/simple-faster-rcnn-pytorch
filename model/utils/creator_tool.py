@@ -113,10 +113,13 @@ class ProposalTargetCreator(object):
         # numpy.concatenate()比numpy.append()效率高，适合大规模的数据拼接
         # 首先将2000个roi和m个bbox给concatenate了一下成为新的roi（2000+m，4）
         # TODO: 这里为啥concatenate?感觉没必要
+        # 在https://www.jianshu.com/p/c04eaf1b3812 这篇文章中提及这个问题了 
+        # 说是在训练初期，几乎就是随机输出，可能连一个正样本都没有，加入GT一方面
+        # 弥补了正样本数量的不足，另一方面还提供了更优质的正样本
         roi = np.concatenate((roi, bbox), axis=0)
 
         pos_roi_per_image = np.round(self.n_sample * self.pos_ratio)
-        iou = bbox_iou(roi, bbox) # iou (2000+m, m) #TODO:最后m行m列其实都是bbox自己？
+        iou = bbox_iou(roi, bbox) # iou (2000+m, m) # 最后m行m列其实都是bbox自己
         gt_assignment = iou.argmax(axis=1) # 按行找到最大值，返回最大值对应的序号。返回的是每个roi与**哪个**bbox的最大。shape是(2000+m,)
         max_iou = iou.max(axis=1) # 每个roi与对应bbox最大的iou，shape是(2000+m,)
         # Offset range of classes from [0, n_fg_class - 1] to [1, n_fg_class].
